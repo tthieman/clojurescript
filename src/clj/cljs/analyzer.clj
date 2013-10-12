@@ -174,12 +174,19 @@
   (let [sym (symbol name)]
     (get (:requires (:ns env)) sym sym)))
 
+(defn deftype? [sym]
+  (let [parts (string/split (str sym) #"\.")
+        ns    (symbol (apply str (butlast parts)))
+        tsym  (symbol (last parts))]
+    (get-in @namespaces [ns :defs tsym :type])))
+
 (defn confirm-ns [env ns-sym]
   (when (and (nil? (get '#{cljs.core goog Math} ns-sym))
              (nil? (get (-> env :ns :requires) ns-sym))
              ;; macros may refer to namespaces never explicitly required
              ;; confirm that the library at least exists
              (nil? (io/resource (ns->relpath ns-sym)))
+             (deftype? ns-sym)
              (:undeclared *cljs-warnings*))
     (warning env
       (str "WARNING: No such namespace: " ns-sym))))
