@@ -4819,12 +4819,6 @@ reduces them without incurring seq initialization"
   IEmptyableCollection
   (-empty [coll] (with-meta cljs.core.List.EMPTY meta))
 
-  ICollection
-  (-conj [coll o] (cons o coll))
-
-  IEmptyableCollection
-  (-empty [coll] (with-meta cljs.core.List.EMPTY meta))
-
   ISequential
   ISeq
   (-first [coll]
@@ -4877,12 +4871,6 @@ reduces them without incurring seq initialization"
 
   IWithMeta
   (-with-meta [coll meta] (ArrayNodeSeq. meta nodes i s __hash))
-
-  ICollection
-  (-conj [coll o] (cons o coll))
-
-  IEmptyableCollection
-  (-empty [coll] (with-meta cljs.core.List.EMPTY meta))
 
   ICollection
   (-conj [coll o] (cons o coll))
@@ -5656,7 +5644,6 @@ reduces them without incurring seq initialization"
   (toString [coll]
     (pr-str* coll))
 
-  Object
   (entry-at [coll k]
     (loop [t tree]
       (if-not (nil? t)

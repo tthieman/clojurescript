@@ -694,10 +694,16 @@
          ret))))
 
 (defn collect-protocols [impls env]
-  (->> impls
-      (filter core/symbol?)
-      (map #(:name (cljs.analyzer/resolve-var (dissoc env :locals) %)))
-      (into #{})))
+  (let [protocols (->> impls
+                       (filter core/symbol?)
+                       (map #(:name (cljs.analyzer/resolve-var (dissoc env :locals) %))))
+        duplicates (for [[protocol freq] (core/frequencies protocols)
+                         :when (core/> freq 1)]
+                     protocol)]
+    (when (seq duplicates)
+      (cljs.analyzer/warning env
+        (core/str "WARNING: Duplicate protocol definitions for " (core/seq duplicates))))
+    (into #{} protocols)))
 
 (defn- build-positional-factory
   [rsym rname fields]
