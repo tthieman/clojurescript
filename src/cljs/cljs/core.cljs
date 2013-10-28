@@ -462,8 +462,8 @@
     (if (satisfies? ISeq coll false)
       (-rest ^not-native coll)
       (let [s (seq coll)]
-        (if-not (nil? s)
-          (-rest s)
+        (if s
+          (-rest ^not-native s)
           ())))
     ()))
 
@@ -482,7 +482,8 @@
   structures define -equiv (and thus =) as a value, not an identity,
   comparison."
   ([x] true)
-  ([x y] (or (identical? x y) (-equiv x y)))
+  ([x y] (or (identical? x y)
+             ^boolean (-equiv x y)))
   ([x y & more]
      (if (= x y)
        (if (next more)
@@ -541,15 +542,7 @@
 
 (extend-type number
   IEquiv
-  (-equiv [x o] (identical? x o))
-
-  IHash
-  (-hash [o] (js-mod (.floor js/Math o) 2147483647)))
-
-(extend-type boolean
-  IHash
-  (-hash [o]
-    (if (identical? o true) 1 0)))
+  (-equiv [x o] (identical? x o)))
 
 (declare with-meta)
 
@@ -715,8 +708,7 @@ reduces them without incurring seq initialization"
   (-rseq [coll]
     (let [c (-count coll)]
       (if (pos? c)
-        (RSeq. coll (dec c) nil)
-        ()))))
+        (RSeq. coll (dec c) nil)))))
 
 (defn prim-seq
   ([prim]
@@ -756,8 +748,7 @@ reduces them without incurring seq initialization"
     (-nth ci i))
   (-rest [coll]
     (if (pos? i)
-      (RSeq. ci (dec i) nil)
-      ()))
+      (RSeq. ci (dec i) nil)))
 
   ICounted
   (-count [coll] (inc i))
@@ -887,7 +878,7 @@ reduces them without incurring seq initialization"
      (when-not (nil? coll)
        (cond
          (satisfies? IIndexed coll false)
-         (-nth ^not-native coll (.floor js/Math n))
+         (-nth ^not-native coll n)
 
          (array? coll)
          (when (< n (.-length coll))
@@ -902,7 +893,7 @@ reduces them without incurring seq initialization"
          
          :else
          (if (satisfies? ISeq coll)
-           (linear-traversal-nth coll (.floor js/Math n))
+           (linear-traversal-nth coll n)
            (throw
              (js/Error.
                (str "nth not supported on this type "
@@ -911,7 +902,7 @@ reduces them without incurring seq initialization"
      (if-not (nil? coll)
        (cond
          (satisfies? IIndexed coll false)
-         (-nth ^not-native coll (.floor js/Math n) not-found)
+         (-nth ^not-native coll n not-found)
 
          (array? coll)
          (if (< n (.-length coll))
@@ -928,7 +919,7 @@ reduces them without incurring seq initialization"
 
          :else
          (if (satisfies? ISeq coll)
-           (linear-traversal-nth coll (.floor js/Math n) not-found)
+           (linear-traversal-nth coll n not-found)
            (throw
              (js/Error.
                (str "nth not supported on this type "
@@ -1071,12 +1062,23 @@ reduces them without incurring seq initialization"
       h
       (add-to-string-hash-cache k))))
 
-(defn hash
-  ([o] (hash o true))
-  ([o ^boolean check-cache]
-     (if (and ^boolean (goog/isString o) check-cache)
-       (check-string-hash-cache o)
-       (-hash o))))
+(defn hash [o]
+  (cond
+    (satisfies? IHash o false)
+    (-hash ^not-native o)
+
+    (number? o)
+    (js-mod (.floor js/Math o) 2147483647)
+
+    (true? o) 1
+
+    (false? o) 0
+
+    (string? o)
+    (check-string-hash-cache o)
+
+    :else
+    (-hash o)))
 
 (defn ^boolean empty?
   "Returns true if coll has no items - same as (not (seq coll)).
@@ -1781,7 +1783,12 @@ reduces them without incurring seq initialization"
                    (bit-shift-right seed 2))))
 
 (defn- hash-coll [coll]
-  (reduce #(hash-combine %1 (hash %2 false)) (hash (first coll) false) (next coll)))
+  (if (seq coll)
+    (loop [res (hash (first coll)) s (next coll)]
+      (if (nil? s)
+        res
+        (recur (hash-combine res (hash (first s))) (next s))))
+    0))
 
 (declare key val)
 
@@ -1924,7 +1931,7 @@ reduces them without incurring seq initialization"
 (defn ^boolean reversible? [coll]
   (satisfies? IReversible coll))
 
-(defn rseq [coll]
+(defn ^seq rseq [coll]
   (-rseq coll))
 
 (defn reverse
@@ -2002,10 +2009,6 @@ reduces them without incurring seq initialization"
 (defn ^boolean list? [x]
   (satisfies? IList x))
 
-(extend-type string
-  IHash
-  (-hash [o] (goog.string/hashCode o)))
-
 (deftype Keyword [ns name fqn ^:mutable _hash]
   Object
   (toString [_] (str ":" fqn))
@@ -2016,16 +2019,11 @@ reduces them without incurring seq initialization"
       (identical? fqn (.-fqn other))
       false))
   IFn
-  (invoke [kw coll]
-    (when-not (nil? coll)
-      (when (satisfies? ILookup coll)
-        (-lookup coll kw nil))))
-  (invoke [kw coll not-found]
-    (if (nil? coll)
-      not-found
-      (if (satisfies? ILookup coll)
-        (-lookup coll kw not-found)
-        not-found)))
+  (-invoke [kw coll]
+    (get coll kw))
+  (-invoke [kw coll not-found]
+    (get coll kw not-found))
+
   IHash
   (-hash [_]
     ; This was checking if _hash == -1, should it stay that way?
@@ -2035,9 +2033,11 @@ reduces them without incurring seq initialization"
                         0x9e3779b9))
         _hash)
       _hash))
+
   INamed
   (-name [_] name)
   (-namespace [_] ns)
+
   IPrintWithWriter
   (-pr-writer [o writer _] (-write writer (str ":" fqn))))
 
@@ -3313,8 +3313,7 @@ reduces them without incurring seq initialization"
   IReversible
   (-rseq [coll]
     (if (pos? cnt)
-      (RSeq. coll (dec cnt) nil)
-      ())))
+      (RSeq. coll (dec cnt) nil))))
 
 (set! cljs.core.PersistentVector.EMPTY_NODE (VectorNode. nil (make-array 32)))
 
@@ -6145,7 +6144,8 @@ reduces them without incurring seq initialization"
 
   IReversible
   (-rseq [coll]
-    (map key (rseq tree-map)))
+    (if (pos? (count tree-map))
+      (map key (rseq tree-map))))
 
   ICounted
   (-count [coll] (count tree-map))

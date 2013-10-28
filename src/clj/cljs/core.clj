@@ -194,10 +194,10 @@
 (defn bool-expr [e]
   (vary-meta e assoc :tag 'boolean))
 
-(defn simple-bool-expr? [ast]
+(defn simple-test-expr? [ast]
   (core/and
-    (#{:var :invoke :constant :dot} (:op ast))
-    (= (cljs.compiler/infer-tag ast) 'boolean)))
+    (#{:var :invoke :constant :dot :js} (:op ast))
+    ('#{boolean seq} (cljs.compiler/infer-tag ast))))
 
 (defmacro and
   "Evaluates exprs one at a time, from left to right. If a form
@@ -208,9 +208,9 @@
   ([x] x)
   ([x & next]
     (let [forms (concat [x] next)]
-      (if (every? simple-bool-expr?
+      (if (every? simple-test-expr?
             (map #(cljs.analyzer/analyze &env %) forms))
-        (let [and-str (->> (repeat (count forms) "~{}")
+        (let [and-str (->> (repeat (count forms) "(~{})")
                         (interpose " && ")
                         (apply core/str))]
           (bool-expr `(~'js* ~and-str ~@forms)))
@@ -226,9 +226,9 @@
   ([x] x)
   ([x & next]
     (let [forms (concat [x] next)]
-      (if (every? simple-bool-expr?
+      (if (every? simple-test-expr?
             (map #(cljs.analyzer/analyze &env %) forms))
-        (let [or-str (->> (repeat (count forms) "~{}")
+        (let [or-str (->> (repeat (count forms) "(~{})")
                         (interpose " || ")
                         (apply core/str))]
           (bool-expr `(~'js* ~or-str ~@forms)))
@@ -658,6 +658,12 @@
          (let [~this ~self-sym]
            ~@body)))))
 
+;; for IFn invoke implementations, we need to drop first arg
+(defn adapt-ifn-invoke-params [type [[this & args :as sig] & body]]
+  `(~(vec args)
+     (this-as ~(vary-meta this assoc :tag type)
+       ~@body)))
+
 (defn adapt-proto-params [type [[this & args :as sig] & body]]
   `(~(vec (cons (vary-meta this assoc :tag type) args))
      (this-as ~this
@@ -669,18 +675,29 @@
             ~(with-meta `(fn ~@(map #(adapt-obj-params type %) meths)) (meta form))))
     sigs))
 
+(defn ifn-invoke-methods [type type-sym [f & meths :as form]]
+  (map
+    (fn [meth]
+      (let [arity (count (first meth))]
+        `(set! ~(prototype-prefix type-sym
+                  (symbol (core/str "cljs$core$IFn$_invoke$arity$" arity)))
+           ~(with-meta `(fn ~meth) (meta form)))))
+    (map #(adapt-ifn-invoke-params type %) meths)))
+
 (defn add-ifn-methods [type type-sym [f & meths :as form]]
   (let [meths    (map #(adapt-ifn-params type %) meths)
         this-sym (with-meta 'self__ {:tag type})
         argsym   (gensym "args")]
-    [`(set! ~(prototype-prefix type-sym 'call) ~(with-meta `(fn ~@meths) (meta form)))
-     `(set! ~(prototype-prefix type-sym 'apply)
-        ~(with-meta
-           `(fn ~[this-sym argsym]
-              (this-as ~this-sym
-                (.apply (.-call ~this-sym) ~this-sym
-                  (.concat (array ~this-sym) (aclone ~argsym)))))
-           (meta form)))]))
+    (concat
+      [`(set! ~(prototype-prefix type-sym 'call) ~(with-meta `(fn ~@meths) (meta form)))
+       `(set! ~(prototype-prefix type-sym 'apply)
+          ~(with-meta
+             `(fn ~[this-sym argsym]
+                (this-as ~this-sym
+                  (.apply (.-call ~this-sym) ~this-sym
+                    (.concat (array ~this-sym) (aclone ~argsym)))))
+             (meta form)))]
+      (ifn-invoke-methods type type-sym form))))
 
 (defn add-proto-methods* [pprefix type type-sym [f & meths :as form]]
   (let [pf (core/str pprefix f)]

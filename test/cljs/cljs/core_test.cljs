@@ -213,6 +213,7 @@
   ;(assert (= "foo/bar" (namespace :foo/bar/baz)))
   (assert (nil? (namespace '/)))
   (assert (= "/" (name '/)))
+  (assert (= "keyword" (name :keyword)))
   ;;TODO: These next two tests need Clojure 1.5
   ;(assert (= "foo" (namespace 'foo//)))
   ;(assert (= "/" (name 'foo//)))
@@ -627,6 +628,8 @@
   (assert (= (re-seq (re-pattern "foo") "foo bar foo baz foo zot") (list "foo" "foo" "foo")))
   (assert (= (re-seq (re-pattern "f(.)o") "foo bar foo baz foo zot") (list ["foo" "o"] ["foo" "o"] ["foo" "o"])))
   (assert (= (re-matches (re-pattern "(?i)foo") "Foo") "Foo"))
+  ; new RegExp("").source => "(?:)" on webkit-family envs, "" elsewhere
+  (assert (#{"#\"\"" "#\"(?:)\""} (pr-str #"")))
 
   ;; destructuring
   (assert (= [2 1] (let [[a b] [1 2]] [b a])))
@@ -1024,7 +1027,10 @@
   (let [pv (vec (range 97))]
     (assert (= (nth pv 96) 96))
     (assert (= (nth pv 97 nil) nil))
-    (assert (= (pv 96) 96)))
+    (assert (= (pv 96) 96))
+    (assert (nil? (rseq [])))
+    (assert (= (reverse pv) (rseq pv))))
+
 
   (let [pv (vec (range 33))]
     (assert (= pv
@@ -1327,6 +1333,7 @@
     (assert (identical? compare (.-comp m1)))
     (assert (zero? (count m1)))
     (assert (zero? (count m2)))
+    (assert (nil? (rseq m1)))
     (let [m1 (assoc m1 :foo 1 :bar 2 :quux 3)
           m2 (assoc m2 :foo 1 :bar 2 :quux 3)]
       (assert (= (count m1) 3))
@@ -1373,6 +1380,7 @@
     (assert (identical? compare (-comparator s1)))
     (assert (zero? (count s1)))
     (assert (zero? (count s2)))
+    (assert (nil? (rseq s1)))
     (let [s1 (conj s1 1 2 3)
           s2 (conj s2 1 2 3)
           s3 (conj s3 1 2 3 7 8 9)
@@ -1962,6 +1970,15 @@
 
   ;; CLJS-608
   (assert (= '("") (re-seq #"\s*" "")))
+
+  ;; CLJS-638
+
+  (deftype KeywordTest []
+    ILookup
+    (-lookup [o k] :nothing)
+    (-lookup [o k not-found] not-found))
+
+  (assert (= (:a (KeywordTest.)) :nothing))
 
   :ok
   )

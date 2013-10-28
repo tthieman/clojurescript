@@ -368,7 +368,7 @@
 
    Compiled files are cached so they will only be read once."
   [m]
-  (let [path (.getAbsolutePath (:file m))
+  (let [path (.getAbsolutePath ^File (:file m))
         js (if (:provides m)
              (map->javascript-file m)
              (if-let [js (get @compiled-cljs path)]
@@ -384,10 +384,11 @@
   returns a JavaScriptFile. In either case the return value satisfies
   IJavaScript."
   [^File file {:keys [output-file] :as opts}]
-  (if output-file
-    (let [out-file (io/file (output-directory opts) output-file)]
-      (compiled-file (comp/compile-file file out-file opts)))
-    (compile-form-seq (ana/forms-seq file))))
+    (if output-file
+      (let [out-file (io/file (output-directory opts) output-file)]
+        (compiled-file (comp/compile-file file out-file opts)))
+      (binding [ana/*cljs-file* (.getPath ^java.io.File file)]
+        (compile-form-seq (ana/forms-seq file)))))
 
 (defn compile-dir
   "Recursively compile all cljs files under the given source
@@ -734,11 +735,13 @@
                   (recur (next sources)
                     (if-let [url (:url source)]
                       (let [path (.getPath ^URL url)]
-                        (if-let [compiled (get @compiled-cljs path)] 
-                          (assoc merged (.getPath ^URL (:source-url source))
-                            (sm/merge-source-maps
-                              (:source-map compiled)
-                              (get closure-source-map path)))
+                        (if-let [compiled (get @compiled-cljs path)]
+                          (if-let [source-url (:source-url source)]
+                            (assoc merged (.getPath ^URL source-url)
+                              (sm/merge-source-maps
+                                (:source-map compiled)
+                                (get closure-source-map path)))
+                            merged)
                           (assoc merged path (get closure-source-map path))))
                       merged)))
                 (spit (io/file name)
@@ -936,18 +939,19 @@
 
 (defn add-source-map-link [{:keys [source-map output-to] :as opts} js]
   (if source-map
-    (str js "\n//@ sourceMappingURL=" (path-relative-to (io/file output-to) {:url source-map}))
+      (if (= output-to :print)
+        (str js "\n//# sourceMappingURL=" source-map)
+        (str js "\n//# sourceMappingURL=" (path-relative-to (io/file output-to) {:url source-map})))
     js))
 
 (defn build
   "Given a source which can be compiled, produce runnable JavaScript."
   ([source opts] (build source opts false))
   ([source opts reset]
-    (when (or reset
-              (= (:optimizations opts) :advanced)
-              (:optimize-constants opts))
+    (when reset
       (ana/reset-constant-table!)
-      (ana/reset-namespaces!))
+      (ana/reset-namespaces!)
+      (comp/reset-compiled-cljs!))
     (let [opts (if (= :nodejs (:target opts))
                  (merge {:optimizations :simple} opts)
                  opts)
@@ -981,12 +985,17 @@
                              [(-compile (io/resource "cljs/nodejscli.cljs") all-opts)]))
                optim (:optimizations all-opts)]
           (if (and optim (not= optim :none))
-            (->> js-sources
-              (apply optimize all-opts)
-              (add-header all-opts)
-              (add-wrapper all-opts)
-              (add-source-map-link all-opts)
-              (output-one-file all-opts))
+            (do
+              (when-let [fname (:source-map all-opts)]
+                (assert (string? fname)
+                  (str ":source-map must name a file when using :whitespace, "
+                       ":simple, or :advanced optimizations")))
+              (->> js-sources
+                (apply optimize all-opts)
+                (add-wrapper all-opts)
+                (add-source-map-link all-opts)
+                (add-header all-opts)
+                (output-one-file all-opts)))
             (apply output-unoptimized all-opts js-sources)))))))
 
 (comment
