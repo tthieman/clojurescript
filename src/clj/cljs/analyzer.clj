@@ -247,7 +247,9 @@
                      :ns full-ns})))))))
 
 (defn resolve-existing-var [env sym]
-  (resolve-var env sym confirm-var-exists))
+  (if-not (-> sym meta ::no-resolve)
+    (resolve-var env sym confirm-var-exists)
+    (resolve-var env sym)))
 
 (defn confirm-bindings [env names]
   (doseq [name names]
@@ -923,7 +925,9 @@
                    (if (= -1 idx)
                      (list s)
                      (let [end (.indexOf s "}" idx)]
-                       (cons (subs s 0 idx) (seg (subs s (inc end))))))))
+                       (lazy-seq
+                         (cons (subs s 0 idx)
+                           (seg (subs s (inc end)))))))))
            enve (assoc env :context :expr)
            argexprs (vec (map #(analyze enve %) args))]
        {:env env :op :js :segs (seg jsform) :args argexprs
@@ -935,7 +939,10 @@
                        (list s)
                        (let [end (.indexOf s "}" idx)
                              inner (:name (resolve-existing-var env (symbol (subs s (+ 2 idx) end))))]
-                         (cons (subs s 0 idx) (cons inner (interp (subs s (inc end)))))))))]
+                         (lazy-seq
+                           (cons (subs s 0 idx)
+                             (cons inner
+                               (interp (subs s (inc end))))))))))]
       {:env env :op :js :form form :code (apply str (interp jsform))
        :tag (-> form meta :tag) :js-op (-> form meta :js-op)})))
 
