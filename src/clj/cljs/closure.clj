@@ -746,7 +746,9 @@
                       merged)))
                 (spit (io/file name)
                   (sm/encode merged
-                    {:lines (+ (:lineCount sm-json) 2) :file (:file sm-json)}))))))
+                    {:lines (+ (:lineCount sm-json) 2)
+                     :file (:file sm-json)
+                     :output-dir (:output-dir opts)}))))))
         source)
       (report-failure result))))
 
@@ -971,7 +973,11 @@
                     (:optimize-constants opts)
                     ana/*track-constants*)
                 ana/*cljs-warnings*
-                (assoc ana/*cljs-warnings* :undeclared (true? (opts :warnings)))]
+                (let [enabled? (true? (opts :warnings))]
+                  (merge ana/*cljs-warnings*
+                         {:undeclared-var enabled?
+                          :undeclared-ns enabled?
+                          :undeclared-ns-form enabled?}))]
         (let [compiled (-compile source all-opts)
               const-table (when ana/*track-constants*
                             (comp/emit-constants-table-to-file @ana/*constant-table*
@@ -989,7 +995,8 @@
               (when-let [fname (:source-map all-opts)]
                 (assert (string? fname)
                   (str ":source-map must name a file when using :whitespace, "
-                       ":simple, or :advanced optimizations")))
+                       ":simple, or :advanced optimizations"))
+                (doall (map #(source-on-disk all-opts %) js-sources)))
               (->> js-sources
                 (apply optimize all-opts)
                 (add-wrapper all-opts)

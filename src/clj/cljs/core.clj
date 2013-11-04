@@ -606,21 +606,18 @@
     (if-let [var (cljs.analyzer/resolve-existing-var (dissoc env :locals) p)]
       (do
         (when-not (:protocol-symbol var)
-          (cljs.analyzer/warning env
-            (core/str "WARNING: Symbol " p " is not a protocol")))
+          (cljs.analyzer/warning :invalid-protocol-symbol env {:protocol p}))
         (when (core/and (:protocol-deprecated cljs.analyzer/*cljs-warnings*)
                 (-> var :deprecated)
                 (not (-> p meta :deprecation-nowarn)))
-          (cljs.analyzer/warning env
-            (core/str "WARNING: Protocol " p " is deprecated")))
+          (cljs.analyzer/warning :protocol-deprecated env {:protocol p}))
         (when (:protocol-symbol var)
           (swap! cljs.analyzer/namespaces
             (fn [ns]
               (update-in ns [(:ns var) :defs (symbol (name p)) :impls]
                 conj type)))))
       (when (:undeclared cljs.analyzer/*cljs-warnings*)
-        (cljs.analyzer/warning env
-          (core/str "WARNING: Can't resolve protocol symbol " p))))))
+        (cljs.analyzer/warning :undeclared-protocol-symbol env {:protocol p})))))
 
 (defn resolve-var [env sym]
   (let [ret (-> (dissoc env :locals)
@@ -951,32 +948,47 @@
        ~@(map method methods)
        (set! ~'*unchecked-if* false))))
 
+(defmacro implements?
+  "EXPERIMENTAL"
+  [psym x]
+  (let [p          (:name
+                    (cljs.analyzer/resolve-var
+                      (dissoc &env :locals) psym))
+        prefix     (protocol-prefix p)
+        xsym       (bool-expr (gensym))
+        [part bit] (fast-path-protocols p)
+        msym       (symbol
+                      (core/str "-cljs$lang$protocol_mask$partition" part "$"))]
+    `(let [~xsym ~x]
+       (if ~xsym
+         (let [bit# ~(if bit `(unsafe-bit-and (. ~xsym ~msym) ~bit))]
+           (if (or bit#
+                 ~(bool-expr `(. ~xsym ~(symbol (core/str "-" prefix)))))
+             true
+             false))
+         false))))
+
 (defmacro satisfies?
   "Returns true if x satisfies the protocol"
-  ([psym x] `(satisfies? ~psym ~x true))
-  ([psym x check-native]
-    (let [p          (:name
-                       (cljs.analyzer/resolve-var
-                         (dissoc &env :locals) psym))
-          prefix     (protocol-prefix p)
-          xsym       (bool-expr (gensym))
-          [part bit] (fast-path-protocols p)
-          msym       (symbol
-                       (core/str "-cljs$lang$protocol_mask$partition" part "$"))]
-      `(let [~xsym ~x]
-         (if ~xsym
-           (let [bit# ~(if bit `(unsafe-bit-and (. ~xsym ~msym) ~bit))]
-             (if (or bit#
-                     ~(bool-expr `(. ~xsym ~(symbol (core/str "-" prefix)))))
-               true
-               ~(if check-native
-                  `(if (coercive-not (. ~xsym ~msym))
-                     (cljs.core/type_satisfies_ ~psym ~xsym)
-                     false)
-                  false)))
-           ~(if check-native
-              `(cljs.core/type_satisfies_ ~psym ~xsym)
-              false))))))
+  [psym x]
+  (let [p          (:name
+                     (cljs.analyzer/resolve-var
+                       (dissoc &env :locals) psym))
+         prefix     (protocol-prefix p)
+         xsym       (bool-expr (gensym))
+         [part bit] (fast-path-protocols p)
+         msym       (symbol
+                      (core/str "-cljs$lang$protocol_mask$partition" part "$"))]
+    `(let [~xsym ~x]
+       (if ~xsym
+         (let [bit# ~(if bit `(unsafe-bit-and (. ~xsym ~msym) ~bit))]
+           (if (or bit#
+                 ~(bool-expr `(. ~xsym ~(symbol (core/str "-" prefix)))))
+             true
+             (if (coercive-not (. ~xsym ~msym))
+               (cljs.core/native-satisfies? ~psym ~xsym)
+               false)))
+         (cljs.core/native-satisfies? ~psym ~xsym)))))
 
 (defmacro lazy-seq [& body]
   `(new cljs.core/LazySeq nil (fn [] ~@body) nil nil))
