@@ -1276,11 +1276,14 @@
   `(js/Array. ~size))
 
 (defmacro js-obj [& rest]
-  (let [kvs-str (->> (repeat "~{}:~{}")
+  (let [all-strings? (every? core/string? (map first (partition 2 rest)))
+        kvs-str (->> (repeat "~{}:~{}")
                      (take (quot (count rest) 2))
                      (interpose ",")
                      (apply core/str))]
-    (list* 'js* (core/str "{" kvs-str "}") rest)))
+    (if all-strings?
+      (list* 'js* (core/str "{" kvs-str "}") rest)
+      (list 'apply 'cljs.core/js-obj (vec rest)))))
 
 (defmacro alength [a]
   (list 'js* "~{}.length" a))
